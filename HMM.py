@@ -35,21 +35,20 @@ class HMM:
     def load(self, basename):
         """reads HMM structure from transition (basename.trans) and emission (basename.emit) files, as well as the probabilities."""
         # Load transitions
-        with open(f"{basename}.trans", 'r') as f:
+        with open(f"{basename}.trans", 'r') as f: # make a universal open script
             for line in f:
                 parts = line.strip().split()
-                if parts[0] not in self.transitions:
+                if parts[0] not in self.transitions: # is the state already in the present?
                     self.transitions[parts[0]] = {}
-                self.transitions[parts[0]][parts[1]] = float(parts[2])
-                if parts[0] != '#' and parts[0] not in self.states:  # Add state if it's not the start symbol and not already added
+                self.transitions[parts[0]][parts[1]] = float(parts[2]) # convert the string to a float and add it to the dict
+                if parts[0] != '#' and parts[0] not in self.states:  # add only if not start/already added
                     self.states.append(parts[0])
 
-        # Load emissions
-        with open(f"{basename}.emit", 'r') as f:
+        with open(f"{basename}.emit", 'r') as f: # state output prob
             for line in f:
                 parts = line.strip().split()
-                if parts[0] not in self.emissions:
-                    self.emissions[parts[0]] = {}
+                if parts[0] not in self.emissions: # check if state is in the dict
+                    self.emissions[parts[0]] = {} # add the prob
                 self.emissions[parts[0]][parts[1]] = float(parts[2])
 
 
@@ -57,51 +56,51 @@ class HMM:
    ## you do this.
     def generate(self, n):
         """return an n-length observation by randomly sampling from this HMM."""
-        state = '#'
-        stateseq = []
-        outputseq = []
+        state = '#' # inital state
+        stateseq = [] # used to store the state seq
+        outputseq = [] #observed outputs
 
         for i in range(n):
-            # Choose the next state based on the current state's transition probabilities
-            next_state = np.random.choice(
+            next_state = np.random.choice( #choose next state based on the a random probabilty from the trans -- use a weighted choice
                 list(self.transitions[state].keys()),
-                p=list(self.transitions[state].values())
+                p=list(self.transitions[state].values()) # trans probabilites to the states
             )
             stateseq.append(next_state)
 
-            # Choose the next output based on the next state's emission probabilities
-            next_output = np.random.choice(
+            
+            next_output = np.random.choice( # randomly select an output based on probs
                 list(self.emissions[next_state].keys()),
-                p=list(self.emissions[next_state].values())
+                p=list(self.emissions[next_state].values()) # emission probs for outputs
             )
             outputseq.append(next_output)
 
-            # Update the current state
+            
             state = next_state
 
-        return Observation(stateseq, outputseq)
+        return Observation(stateseq, outputseq) # observation obj with state/output sequences
 
 
 
     def forward(self, observations):
-        """Implements the forward algorithm for an HMM."""
-        F = np.zeros((len(self.states), len(observations)))  # Use self.states to define the size of the forward matrix
+        forward_matrix = np.zeros((len(self.states), len(observations)))  # use self.states to define the size of the forward matrix
         start_probs = self.transitions['#']
 
-        # Initialize the forward matrix with the start probabilities
-        for i, state in enumerate(self.states):
-            if observations[0] in self.emissions[state]:  # Check if the first observation is possible for the state
-                F[i, 0] = start_probs.get(state, 0) * self.emissions[state].get(observations[0], 0)
+        
+        for i, state in enumerate(self.states): # forward matrix with the start probabilities
+            if observations[0] in self.emissions[state]:  # check if the first observation is possible for the state
+                forward_matrix[i, 0] = start_probs.get(state, 0) * self.emissions[state].get(observations[0], 0)
 
-        # Iterate over the rest of the observations
-        for t in range(1, len(observations)):
+        
+        for t in range(1, len(observations)): # go through each observation
             for s_to_idx, s_to in enumerate(self.states):
                 for s_from_idx, s_from in enumerate(self.states):
-                    if observations[t] in self.emissions[s_to]:  # Check if the observation is possible for the state
-                        F[s_to_idx, t] += (F[s_from_idx, t-1] * self.transitions[s_from].get(s_to, 0) * self.emissions[s_to].get(observations[t], 0))
+                    if observations[t] in self.emissions[s_to]:  # is the observation possible for the state ???
+                        transition_probability = self.transitions[s_from].get(s_to, 0) #prob from previous state to current
+                        emission_probability = self.emissions[s_to].get(observations[t], 0) #prob of emission based on current state
+                        previous_probability = forward_matrix[s_from_idx, t-1] # get the last prob value from the matrix
+                        forward_matrix[s_to_idx, t] += previous_probability * transition_probability * emission_probability # update current coordinate
 
-        # Probability of the observation sequence is the sum of the final column
-        prob_obs_sequence = np.sum(F[:, -1])
+        prob_obs_sequence = np.sum(forward_matrix[:, -1]) # probability is the last column -- memoization
         return prob_obs_sequence
 
 
@@ -115,28 +114,43 @@ class HMM:
         the output sequence, using the Viterbi algorithm.
         """
          # Initialize Viterbi matrix (probabilities) and backpointers
-        V = np.zeros((len(self.states), len(observation)))
+        viterbi_matrix = np.zeros((len(self.states), len(observation)))
         backpointers = np.zeros((len(self.states), len(observation)), 'int')
 
-        # Initialize first column of Viterbi matrix
         start_probs = self.transitions['#']
         for state in self.states:
             if observation[0] in self.emissions[state]:  # Check if the first observation is possible for the state
-                V[self.states.index(state), 0] = start_probs.get(state, 0) * self.emissions[state].get(observation[0], 0)
+                viterbi_matrix[self.states.index(state), 0] = start_probs.get(state, 0) * self.emissions[state].get(observation[0], 0)
 
-        # Iterate over the rest of the observations
+       
         for t in range(1, len(observation)):
-            for s in self.states:
-                # Find the maximum probability and the state that provides this max probability
-                max_prob, best_state = max(
-                    (V[self.states.index(s_prev), t-1] * self.transitions[s_prev].get(s, 0) * self.emissions[s].get(observation[t], 0), s_prev) 
-                    for s_prev in self.states
-                )
-                V[self.states.index(s), t] = max_prob
-                backpointers[self.states.index(s), t] = self.states.index(best_state)
+            
+            for s in self.states: # each possible current state 's'
+                
+                max_probability_for_s = float('-inf')  
+                best_previous_state_for_s = None  
 
-        # Find the final state with maximum probability
-        final_state = np.argmax(V[:, -1])
+                
+                for s_prev in self.states:
+                    
+                    transition_probability = self.transitions[s_prev].get(s, 0) # probability of transitioning from s_prev to s
+                    
+                    emission_probability = self.emissions[s].get(observation[t], 0) # emission probability for the current observation from state 's'
+                    
+                    previous_viterbi_probability = viterbi_matrix[self.states.index(s_prev), t-1] #  viterbi probability for the previous state and time step
+                    
+                    viterbi_product = previous_viterbi_probability * transition_probability * emission_probability
+                    
+                    if viterbi_product > max_probability_for_s: # check for the greater valur
+                        max_probability_for_s = viterbi_product
+                        best_previous_state_for_s = s_prev
+
+                viterbi_matrix[self.states.index(s), t] = max_probability_for_s
+                
+                backpointers[self.states.index(s), t] = self.states.index(best_previous_state_for_s)
+
+
+        final_state = np.argmax(viterbi_matrix[:, -1]) # get the last state
 
         # Follow the backpointers to find the best path
         best_path = [self.states[final_state]]
@@ -183,37 +197,3 @@ def test_forward():
         print('Forward probability for:', ' '.join(observation))
         print(prob_sequence)
 
-
-
-
-if __name__ == "__main__":
-    # Set up command-line argument parsing
-    parser = argparse.ArgumentParser(description='HMM Model Processing Script')
-    parser.add_argument('model', help='The path to the trained model file (without extension)')
-    parser.add_argument('--forward', help='Run the forward algorithm on the observations file')
-    parser.add_argument('--viterbi', help='Run the Viterbi algorithm on the observations file')
-    parser.add_argument('observations', nargs='?', help='The path to the observations file', default='')
-
-    args = parser.parse_args()
-
-    # Load the model
-    hmm_model = HMM()
-    hmm_model.load(args.model)
-
-    if args.forward:
-        # Run the forward algorithm if the flag is present
-        with codecs.open(args.forward, 'r', 'utf-8') as f:
-            observations = f.read().strip().split()
-            final_state_prob = hmm_model.forward(observations)
-            print(f"The probability of the observation sequence is: {final_state_prob}")
-
-    if args.viterbi:
-        # Run the Viterbi algorithm if the flag is present
-        with codecs.open(args.viterbi, 'r', 'utf-8') as f:
-            for line in f.readlines():
-                observation = line.strip().split()
-                if observation:  # Ensure observation is not empty
-                    state_sequence = hmm_model.viterbi(observation)
-                    print(f"Viterbi state sequence: {' '.join(state_sequence)}")
-                else:
-                    print("Empty observation sequence.")
